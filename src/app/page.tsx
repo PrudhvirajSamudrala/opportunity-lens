@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 import { 
   Search, 
@@ -61,9 +61,8 @@ export default function Home() {
   const [newSkills, setNewSkills] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
 
-  async function fetchOpportunities() {
+  const fetchOpportunities = useCallback(async () => {
     try {
-      setLoading(true);
       const { data, error } = await supabase
         .from("opportunities")
         .select("*")
@@ -79,10 +78,39 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
-    fetchOpportunities();
+    let ignore = false;
+
+    async function loadData() {
+      try {
+        const { data, error } = await supabase
+          .from("opportunities")
+          .select("*")
+          .order("created_at", { ascending: false });
+
+        if (!ignore) {
+          if (error) {
+            console.error("Error fetching opportunities:", error);
+          } else if (data) {
+            setOpportunities(data as Opportunity[]);
+          }
+          setLoading(false);
+        }
+      } catch (err) {
+        if (!ignore) {
+          console.error("Fetch exception:", err);
+          setLoading(false);
+        }
+      }
+    }
+
+    loadData();
+
+    return () => {
+      ignore = true;
+    };
   }, []);
 
   const toggleSkill = (skill: string) => {
@@ -126,7 +154,6 @@ export default function Home() {
       console.error("Insert error:", error);
       alert("Failed to create opportunity. Check console.");
     } else {
-      // Reset form & refresh
       setNewTitle("");
       setNewCompany("");
       setNewDescription("");
