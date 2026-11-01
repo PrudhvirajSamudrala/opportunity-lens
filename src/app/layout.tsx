@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "OpportunityLens — Skill Gap & Opportunity Engine",
-  description: "Match your technical skills against live roles and close qualification gaps.",
+  title: "OpportunityLens — AI Skill Diagnostic & Match Engine",
+  description: "Match your technical skills against live roles and close qualification gaps in real time.",
 };
 
 export default function RootLayout({
@@ -23,8 +23,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+    <html lang="en" className="dark">
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-[#090d16] text-slate-100 selection:bg-emerald-500/30 selection:text-emerald-200`}>
         {children}
       </body>
     </html>

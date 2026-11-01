@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
+import type { User } from "@supabase/supabase-js";
 import { 
   Search, 
   Target, 
@@ -20,7 +21,10 @@ import {
   MapPin,
   Building2,
   Calendar,
-  Trash2
+  Trash2,
+  User as UserIcon,
+  LogOut,
+  Flame
 } from "lucide-react";
 
 interface Opportunity {
@@ -111,18 +115,26 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedFilter, setSelectedFilter] = useState("All");
+  const [matchThresholdOnly, setMatchThresholdOnly] = useState(false);
 
-  // Modals
+  // Authentication State
+  const [user, setUser] = useState<User | null>(null);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState("");
+
+  // Modals & Lens State
   const [isSkillModalOpen, setIsSkillModalOpen] = useState(false);
   const [isPostModalOpen, setIsPostModalOpen] = useState(false);
   const [activeDetailModal, setActiveDetailModal] = useState<Opportunity | null>(null);
-
-  // User Skills & Bookmarks
-  const [userSkills, setUserSkills] = useState<string[]>(["React", "JavaScript", "Git"]);
+  const [userSkills, setUserSkills] = useState<string[]>(["React", "JavaScript", "TypeScript", "Git"]);
   const [savedIds, setSavedIds] = useState<string[]>([]);
   const [showingSavedOnly, setShowingSavedOnly] = useState(false);
 
-  // Form State
+  // Post Form State
   const [newTitle, setNewTitle] = useState("");
   const [newCompany, setNewCompany] = useState("");
   const [newType, setNewType] = useState<Opportunity["type"]>("Internship");
@@ -152,6 +164,16 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    // 1. Supabase Auth Session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    // 2. Load Local Storage Bookmarks
     const saved = localStorage.getItem("saved_opportunities");
     if (saved) {
       try {
@@ -162,6 +184,7 @@ export default function Home() {
       }
     }
 
+    // 3. Initial Load
     let ignore = false;
     async function loadInitial() {
       try {
@@ -185,9 +208,9 @@ export default function Home() {
 
     loadInitial();
 
-    // Supabase Realtime Subscription: auto-sync new posts & deletions
+    // 4. Supabase Realtime Channel
     const channel = supabase
-      .channel("realtime-opportunities")
+      .channel("realtime-opportunities-feed")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "opportunities" },
@@ -199,9 +222,46 @@ export default function Home() {
 
     return () => {
       ignore = true;
+      subscription.unsubscribe();
       supabase.removeChannel(channel);
     };
   }, [fetchOpportunities]);
+
+  const handleAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthLoading(true);
+    setAuthError("");
+
+    if (authMode === "signup") {
+      const { error } = await supabase.auth.signUp({
+        email: authEmail,
+        password: authPassword,
+      });
+      if (error) setAuthError(error.message);
+      else {
+        alert("Account registered successfully! Check your email to verify if confirmation is enabled.");
+        setIsAuthModalOpen(false);
+        setAuthEmail("");
+        setAuthPassword("");
+      }
+    } else {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: authEmail,
+        password: authPassword,
+      });
+      if (error) setAuthError(error.message);
+      else {
+        setIsAuthModalOpen(false);
+        setAuthEmail("");
+        setAuthPassword("");
+      }
+    }
+    setAuthLoading(false);
+  };
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+  };
 
   const toggleBookmark = (id: string) => {
     const next = savedIds.includes(id) 
@@ -286,123 +346,180 @@ export default function Home() {
     const skills = item.required_skills || [];
     const matchesSearch =
       item.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      item.company.toLowerCase().includes(searchTerm.toLowerCase()) ||
       skills.some((tag) => tag.toLowerCase().includes(searchTerm.toLowerCase()));
     const matchesFilter = selectedFilter === "All" || item.type === selectedFilter;
     const matchesSaved = !showingSavedOnly || savedIds.includes(item.id);
-    return matchesSearch && matchesFilter && matchesSaved;
+    const { score } = calculateMatch(skills);
+    const matchesThreshold = !matchThresholdOnly || score >= 60;
+    return matchesSearch && matchesFilter && matchesSaved && matchesThreshold;
   });
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 selection:bg-indigo-500 selection:text-white">
-      {/* Header */}
-      <header className="border-b border-slate-800 bg-slate-900/60 backdrop-blur-md sticky top-0 z-40">
-        <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="h-9 w-9 rounded-xl bg-gradient-to-tr from-indigo-500 to-cyan-400 flex items-center justify-center font-bold text-white shadow-lg shadow-indigo-500/20">
+    <div className="min-h-screen bg-[#070b12] text-slate-100 selection:bg-emerald-500/30 selection:text-emerald-200 relative overflow-hidden">
+      {/* Background Glow Mesh */}
+      <div className="pointer-events-none absolute -top-40 left-1/2 -translate-x-1/2 w-[700px] h-[450px] bg-gradient-to-b from-emerald-500/10 via-cyan-500/10 to-transparent blur-3xl opacity-70" />
+
+      {/* Navigation */}
+      <header className="border-b border-emerald-950/40 bg-[#070b12]/80 backdrop-blur-xl sticky top-0 z-40">
+        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-emerald-400 via-teal-500 to-cyan-500 flex items-center justify-center font-black text-slate-950 shadow-lg shadow-emerald-500/20">
               OL
             </div>
-            <span className="text-xl font-bold tracking-tight">
-              Opportunity<span className="text-indigo-400">Lens</span>
-            </span>
+            <div>
+              <span className="text-lg font-bold tracking-tight text-white flex items-center gap-1.5">
+                Opportunity<span className="text-emerald-400">Lens</span>
+                <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">v2.0</span>
+              </span>
+            </div>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-2.5 sm:gap-3">
             <button
               onClick={() => setShowingSavedOnly(!showingSavedOnly)}
-              className={`px-3 py-2 rounded-lg border text-xs sm:text-sm font-medium flex items-center gap-1.5 transition ${
+              className={`px-3 py-1.5 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition ${
                 showingSavedOnly 
                   ? "bg-amber-500/10 border-amber-500/40 text-amber-300"
-                  : "bg-slate-900 border-slate-800 text-slate-300 hover:text-white"
+                  : "bg-slate-900/60 border-slate-800 text-slate-300 hover:text-white"
               }`}
             >
               <Bookmark className={`w-3.5 h-3.5 ${showingSavedOnly ? "fill-amber-400 text-amber-400" : ""}`} />
-              Saved ({savedIds.length})
+              <span className="hidden sm:inline">Saved</span> ({savedIds.length})
             </button>
 
             <button
               onClick={() => setIsPostModalOpen(true)}
-              className="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs sm:text-sm font-medium flex items-center gap-1.5 transition"
+              className="px-3 py-1.5 rounded-lg bg-slate-900/80 hover:bg-slate-800 border border-slate-800 text-slate-200 text-xs font-medium flex items-center gap-1.5 transition"
             >
-              <PlusCircle className="w-4 h-4 text-slate-300" /> Post Opportunity
+              <PlusCircle className="w-4 h-4 text-emerald-400" />
+              <span className="hidden sm:inline">Post Role</span>
             </button>
 
             <button
               onClick={() => setIsSkillModalOpen(true)}
-              className="px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 transition text-white text-xs sm:text-sm font-medium flex items-center gap-2 shadow-sm"
+              className="px-3.5 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 transition text-slate-950 text-xs font-bold flex items-center gap-1.5 shadow-md shadow-emerald-500/20"
             >
-              <Sparkles className="w-4 h-4" /> Run Skill Lens ({userSkills.length})
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Skill Lens</span>
+              <span className="bg-slate-950/20 px-1 rounded text-[11px] font-mono">{userSkills.length}</span>
             </button>
+
+            {/* Auth Button */}
+            {user ? (
+              <div className="flex items-center gap-2 pl-2 border-l border-slate-800">
+                <div className="h-8 w-8 rounded-full bg-emerald-950 border border-emerald-800 flex items-center justify-center text-xs font-bold text-emerald-300 uppercase">
+                  {user.email?.charAt(0) || "U"}
+                </div>
+                <button
+                  onClick={handleSignOut}
+                  title="Sign Out"
+                  className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-rose-400 transition"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => {
+                  setAuthMode("login");
+                  setIsAuthModalOpen(true);
+                }}
+                className="px-3 py-1.5 rounded-lg border border-slate-800 hover:border-slate-700 bg-slate-900/50 hover:bg-slate-800 text-xs font-semibold text-slate-200 flex items-center gap-1.5 transition"
+              >
+                <UserIcon className="w-3.5 h-3.5" /> Sign In
+              </button>
+            )}
           </div>
         </div>
       </header>
 
-      {/* Hero */}
-      <section className="max-w-6xl mx-auto px-6 pt-16 pb-12 text-center">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 text-xs font-semibold mb-6">
-          <Layers className="w-3.5 h-3.5" /> Diagnostic & Opportunity Engine
+      {/* Hero Section */}
+      <section className="max-w-6xl mx-auto px-6 pt-16 pb-10 text-center relative z-10">
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-emerald-500/30 bg-emerald-950/40 text-emerald-300 text-xs font-semibold mb-6 shadow-inner">
+          <Layers className="w-3.5 h-3.5 text-emerald-400" />
+          Autonomous Gap Analysis & Matching Engine
         </div>
-        <h1 className="text-4xl sm:text-6xl font-extrabold tracking-tight text-slate-100 max-w-3xl mx-auto leading-tight">
-          Find matched opportunities. Close your{" "}
-          <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-cyan-300">
-            skill gaps
-          </span>.
+
+        <h1 className="text-4xl sm:text-6xl font-black tracking-tight text-white max-w-4xl mx-auto leading-tight">
+          Precision matching for engineering roles. Instant{" "}
+          <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400">
+            skill gap roadmaps.
+          </span>
         </h1>
-        <p className="mt-4 text-slate-400 max-w-xl mx-auto text-base sm:text-lg">
-          Configure your current toolbelt with the Skill Lens. See exact match percentages and identify missing prerequisites.
+
+        <p className="mt-4 text-slate-400 max-w-2xl mx-auto text-sm sm:text-base leading-relaxed">
+          Calibrate your tech stack with the Skill Lens. Discover entry-level roles, hackathons, and open-source programs mapped directly to your current competencies.
         </p>
 
-        {/* Filter / Search */}
-        <div className="mt-10 max-w-2xl mx-auto flex flex-col gap-4">
+        {/* Search, Filter & Quick-Toggles */}
+        <div className="mt-8 max-w-3xl mx-auto space-y-4">
           <div className="relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 w-5 h-5" />
             <input
               type="text"
-              placeholder="Filter by role or skill (e.g. Next.js, PostgreSQL)..."
+              placeholder="Search by title, company, or tech stack (e.g. Next.js, Anthropic, Python)..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full bg-slate-900 border border-slate-800 rounded-xl py-3.5 pl-12 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
+              className="w-full bg-[#0d1424]/90 border border-slate-800/80 rounded-2xl py-3.5 pl-12 pr-4 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500/40 shadow-xl transition"
             />
           </div>
 
-          <div className="flex items-center justify-center gap-2 flex-wrap">
-            {["All", "Internship", "Open Source", "Hackathon", "Entry-Level"].map((filter) => (
-              <button
-                key={filter}
-                onClick={() => setSelectedFilter(filter)}
-                className={`text-xs px-3.5 py-1.5 rounded-full font-medium transition ${
-                  selectedFilter === filter
-                    ? "bg-indigo-600 text-white"
-                    : "bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200"
-                }`}
-              >
-                {filter}
-              </button>
-            ))}
+          <div className="flex items-center justify-between flex-wrap gap-2 pt-2">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {["All", "Internship", "Open Source", "Hackathon", "Entry-Level"].map((filter) => (
+                <button
+                  key={filter}
+                  onClick={() => setSelectedFilter(filter)}
+                  className={`text-xs px-3 py-1.5 rounded-lg font-medium transition ${
+                    selectedFilter === filter
+                      ? "bg-emerald-500 text-slate-950 font-bold shadow-md shadow-emerald-500/20"
+                      : "bg-[#0d1424] text-slate-400 border border-slate-800/80 hover:text-slate-200 hover:border-slate-700"
+                  }`}
+                >
+                  {filter}
+                </button>
+              ))}
+            </div>
+
+            <button
+              onClick={() => setMatchThresholdOnly(!matchThresholdOnly)}
+              className={`text-xs px-3 py-1.5 rounded-lg border font-medium flex items-center gap-1.5 transition ${
+                matchThresholdOnly 
+                  ? "bg-teal-500/20 border-teal-500/50 text-teal-300" 
+                  : "bg-[#0d1424] text-slate-400 border-slate-800 hover:text-slate-200"
+              }`}
+            >
+              <Flame className="w-3.5 h-3.5 text-amber-400" />
+              <span>Top Matches (&ge;60%)</span>
+            </button>
           </div>
         </div>
       </section>
 
-      {/* Grid */}
-      <main className="max-w-6xl mx-auto px-6 pb-20">
-        <div className="flex items-center justify-between border-b border-slate-800/80 pb-4 mb-6">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-2">
-            <Target className="w-4 h-4 text-indigo-400" /> Opportunities ({filteredOpportunities.length})
-          </h2>
-          <span className="text-xs text-slate-400">
-            Match calculated against <strong>{userSkills.length}</strong> active skills
-          </span>
+      {/* Live Catalog Feed */}
+      <main className="max-w-7xl mx-auto px-6 pb-24">
+        <div className="flex items-center justify-between border-b border-slate-800/60 pb-4 mb-6">
+          <div className="flex items-center gap-2">
+            <Target className="w-4 h-4 text-emerald-400" />
+            <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400">
+              Active Opportunities ({filteredOpportunities.length})
+            </h2>
+          </div>
+          <div className="text-xs text-slate-500 font-mono">
+            Calibrated with <span className="text-emerald-400 font-bold">{userSkills.length}</span> active skills
+          </div>
         </div>
 
         {loading ? (
-          <div className="flex flex-col items-center justify-center py-20 text-slate-400">
-            <Loader2 className="w-8 h-8 animate-spin text-indigo-500 mb-3" />
-            <p className="text-sm">Fetching opportunities from Supabase...</p>
+          <div className="flex flex-col items-center justify-center py-24 text-slate-500">
+            <Loader2 className="w-8 h-8 animate-spin text-emerald-400 mb-3" />
+            <p className="text-xs font-mono">Synchronizing opportunities with PostgreSQL...</p>
           </div>
         ) : filteredOpportunities.length === 0 ? (
-          <div className="text-center py-20 text-slate-500 text-sm">
-            {showingSavedOnly 
-              ? "You haven't bookmarked any opportunities yet." 
-              : "No opportunities found matching your criteria."}
+          <div className="text-center py-24 text-slate-500 border border-dashed border-slate-800/80 rounded-2xl bg-[#0d1424]/40">
+            <p className="text-sm font-medium">No opportunities match your current filter parameters.</p>
+            <p className="text-xs text-slate-600 mt-1">Try clearing your search keyword or relaxing your Skill Lens.</p>
           </div>
         ) : (
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
@@ -416,45 +533,66 @@ export default function Home() {
               return (
                 <div
                   key={op.id}
-                  className="group border border-slate-800/90 rounded-2xl p-5 bg-slate-900/40 hover:bg-slate-900/80 hover:border-slate-700 transition flex flex-col justify-between relative"
+                  className="group rounded-2xl p-5 bg-[#0d1424]/60 border border-slate-800/70 hover:border-emerald-500/40 hover:bg-[#0d1424]/90 transition-all duration-300 flex flex-col justify-between shadow-lg relative"
                 >
                   <div>
-                    <div className="flex items-start justify-between gap-3">
-                      <span className="text-[11px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700">
+                    {/* Header Row */}
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-slate-900 text-slate-300 border border-slate-800">
                         {op.type}
                       </span>
+
                       <div
-                        className={`flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-md border ${
+                        className={`flex items-center gap-1.5 text-xs font-bold px-2.5 py-0.5 rounded-full border ${
                           isHighMatch
-                            ? "text-emerald-400 bg-emerald-950/60 border-emerald-800/50"
+                            ? "text-emerald-300 bg-emerald-950/60 border-emerald-500/30 shadow-sm shadow-emerald-500/20"
                             : isMediumMatch
-                            ? "text-amber-400 bg-amber-950/60 border-amber-800/50"
-                            : "text-slate-400 bg-slate-800/60 border-slate-700"
+                            ? "text-teal-300 bg-teal-950/60 border-teal-500/30"
+                            : "text-slate-400 bg-slate-900 border-slate-800"
                         }`}
                       >
-                        <CheckCircle2 className="w-3 h-3" /> {score}% match
+                        <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                        <span>{score}% match</span>
                       </div>
                     </div>
 
-                    <h3 className="mt-4 font-bold text-lg text-slate-100 group-hover:text-indigo-300 transition">
+                    {/* Match Bar */}
+                    <div className="w-full bg-slate-900 h-1.5 rounded-full mt-3 overflow-hidden border border-slate-800">
+                      <div
+                        className={`h-full transition-all duration-500 ${
+                          isHighMatch 
+                            ? "bg-gradient-to-r from-emerald-500 to-teal-400" 
+                            : isMediumMatch 
+                            ? "bg-gradient-to-r from-teal-500 to-cyan-400" 
+                            : "bg-slate-700"
+                        }`}
+                        style={{ width: `${score}%` }}
+                      />
+                    </div>
+
+                    <h3 className="mt-4 font-bold text-base text-white group-hover:text-emerald-300 transition line-clamp-1">
                       {op.title}
                     </h3>
-                    <p className="text-sm text-slate-400 font-medium">
-                      {op.company} • {op.location}
+                    <p className="text-xs text-slate-400 font-medium mt-0.5">
+                      {op.company} • <span className="text-slate-500">{op.location}</span>
                     </p>
-                    <p className="mt-3 text-xs text-slate-400 leading-relaxed line-clamp-3">
+
+                    <p className="mt-3 text-xs text-slate-400 leading-relaxed line-clamp-2">
                       {op.description}
                     </p>
 
+                    {/* Skill Breakdown */}
                     <div className="mt-4 space-y-2 text-xs">
                       {matched.length > 0 && (
                         <div>
-                          <span className="text-slate-400 block text-[11px] mb-1">Matched Skills:</span>
+                          <span className="text-slate-500 text-[10px] uppercase font-bold tracking-wider block mb-1">
+                            Matched
+                          </span>
                           <div className="flex flex-wrap gap-1">
                             {matched.map((s) => (
                               <span
                                 key={s}
-                                className="inline-flex items-center gap-1 bg-emerald-950/50 text-emerald-300 border border-emerald-800/40 px-2 py-0.5 rounded text-[11px]"
+                                className="inline-flex items-center gap-1 bg-emerald-950/40 text-emerald-300 border border-emerald-800/40 px-2 py-0.5 rounded text-[11px] font-medium"
                               >
                                 <Check className="w-2.5 h-2.5" /> {s}
                               </span>
@@ -465,14 +603,16 @@ export default function Home() {
 
                       {missing.length > 0 && (
                         <div>
-                          <span className="text-slate-400 block text-[11px] mb-1">Skill Gaps to Close:</span>
+                          <span className="text-slate-500 text-[10px] uppercase font-bold tracking-wider block mb-1">
+                            Required Gap
+                          </span>
                           <div className="flex flex-wrap gap-1">
                             {missing.map((s) => (
                               <span
                                 key={s}
-                                className="inline-flex items-center gap-1 bg-amber-950/40 text-amber-300 border border-amber-800/30 px-2 py-0.5 rounded text-[11px]"
+                                className="inline-flex items-center gap-1 bg-rose-950/30 text-rose-300 border border-rose-900/40 px-2 py-0.5 rounded text-[11px] font-medium"
                               >
-                                <AlertCircle className="w-2.5 h-2.5" /> {s}
+                                <AlertCircle className="w-2.5 h-2.5 text-rose-400" /> {s}
                               </span>
                             ))}
                           </div>
@@ -481,7 +621,8 @@ export default function Home() {
                     </div>
                   </div>
 
-                  <div className="mt-6 pt-4 border-t border-slate-800/60 flex items-center justify-between text-xs">
+                  {/* Card Bottom Actions */}
+                  <div className="mt-6 pt-3.5 border-t border-slate-800/60 flex items-center justify-between text-xs">
                     <div className="flex items-center gap-2">
                       <button 
                         onClick={() => toggleBookmark(op.id)}
@@ -498,8 +639,8 @@ export default function Home() {
                       <button
                         onClick={(e) => handleDeleteOpportunity(op.id, e)}
                         disabled={isDeleting}
-                        title="Delete this role"
-                        className="text-slate-500 hover:text-rose-400 transition p-1"
+                        title="Delete Role"
+                        className="text-slate-600 hover:text-rose-400 transition p-1"
                       >
                         {isDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-400" /> : <Trash2 className="w-3.5 h-3.5" />}
                       </button>
@@ -507,9 +648,9 @@ export default function Home() {
 
                     <button 
                       onClick={() => setActiveDetailModal(op)}
-                      className="text-indigo-400 hover:text-indigo-300 transition flex items-center gap-1 font-semibold cursor-pointer"
+                      className="text-emerald-400 hover:text-emerald-300 transition flex items-center gap-1 font-semibold cursor-pointer"
                     >
-                      View Details <ArrowUpRight className="w-3.5 h-3.5" />
+                      View Roadmap <ArrowUpRight className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
@@ -519,80 +660,81 @@ export default function Home() {
         )}
       </main>
 
-      {/* Details & Roadmap Modal */}
+      {/* Details & Skill Gap Roadmap Modal */}
       {activeDetailModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-xl w-full p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+          <div className="bg-[#0b101c] border border-slate-800 rounded-3xl max-w-xl w-full p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto">
             <button
               onClick={() => setActiveDetailModal(null)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-100 p-1 rounded-lg"
+              className="absolute top-5 right-5 text-slate-400 hover:text-white p-1 rounded-lg"
             >
               <X className="w-5 h-5" />
             </button>
 
             <div className="flex items-center gap-2 mb-2">
-              <span className="text-[11px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md bg-indigo-950 text-indigo-300 border border-indigo-800/50">
+              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-emerald-950/80 text-emerald-300 border border-emerald-800/50">
                 {activeDetailModal.type}
               </span>
               {activeDetailModal.created_at && (
-                <span className="text-xs text-slate-500 flex items-center gap-1">
+                <span className="text-xs text-slate-500 flex items-center gap-1 font-mono">
                   <Calendar className="w-3 h-3" /> {new Date(activeDetailModal.created_at).toLocaleDateString()}
                 </span>
               )}
             </div>
 
-            <h2 className="text-xl font-bold text-slate-100">{activeDetailModal.title}</h2>
-            <div className="flex items-center gap-3 text-xs text-slate-400 mt-1 mb-4">
-              <span className="flex items-center gap-1"><Building2 className="w-3.5 h-3.5" /> {activeDetailModal.company}</span>
+            <h2 className="text-xl font-bold text-white">{activeDetailModal.title}</h2>
+            <div className="flex items-center gap-3 text-xs text-slate-400 mt-1 mb-5">
+              <span className="flex items-center gap-1 font-medium text-slate-300"><Building2 className="w-3.5 h-3.5 text-emerald-400" /> {activeDetailModal.company}</span>
               <span>•</span>
-              <span className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5" /> {activeDetailModal.location}</span>
+              <span className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5 text-slate-500" /> {activeDetailModal.location}</span>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-300 leading-relaxed mb-6">
-              <p className="font-semibold text-slate-200 mb-1">Description:</p>
+            <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 text-xs text-slate-300 leading-relaxed mb-6">
+              <p className="font-bold text-slate-200 mb-1">Role Description:</p>
               {activeDetailModal.description}
             </div>
 
+            {/* Gap Action Plan */}
             <div>
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-1.5">
-                <BookOpen className="w-4 h-4 text-indigo-400" /> Curated Skill Gap Action Plan
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300 mb-3 flex items-center gap-1.5">
+                <BookOpen className="w-4 h-4 text-emerald-400" /> Curated Gap-Closing Roadmap
               </h3>
 
               {(() => {
                 const { score, missing, matched } = calculateMatch(activeDetailModal.required_skills);
                 return (
                   <div className="space-y-3">
-                    <div className="flex items-center justify-between text-xs p-2.5 rounded-lg bg-slate-950 border border-slate-800">
-                      <span>Overall Match Level:</span>
-                      <span className="font-bold text-indigo-300">{score}%</span>
+                    <div className="flex items-center justify-between text-xs p-3 rounded-xl bg-slate-950 border border-slate-800">
+                      <span className="text-slate-400">Match Readiness:</span>
+                      <span className="font-bold font-mono text-emerald-300">{score}%</span>
                     </div>
 
                     {missing.length === 0 ? (
-                      <div className="p-3 rounded-lg bg-emerald-950/40 border border-emerald-800/30 text-emerald-300 text-xs flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4" /> You meet all prerequisites for this position!
+                      <div className="p-3.5 rounded-xl bg-emerald-950/40 border border-emerald-800/40 text-emerald-300 text-xs flex items-center gap-2 font-medium">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400" /> You meet all technical prerequisites for this position.
                       </div>
                     ) : (
                       <div className="space-y-2">
                         {missing.map((skill) => {
                           const res = SKILL_RESOURCES[skill];
                           return (
-                            <div key={skill} className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 flex flex-col gap-1.5 text-xs">
+                            <div key={skill} className="p-3.5 rounded-xl bg-[#070b12] border border-slate-800/80 flex flex-col gap-1.5 text-xs">
                               <div className="flex items-center justify-between">
-                                <span className="font-bold text-amber-300 flex items-center gap-1.5">
-                                  <AlertCircle className="w-3.5 h-3.5 text-amber-400" /> Missing: {skill}
+                                <span className="font-bold text-rose-300 flex items-center gap-1.5">
+                                  <AlertCircle className="w-3.5 h-3.5 text-rose-400" /> Missing: {skill}
                                 </span>
                                 {res && (
                                   <a
                                     href={res.url}
                                     target="_blank"
                                     rel="noreferrer"
-                                    className="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 underline underline-offset-2"
+                                    className="text-[11px] text-emerald-400 hover:text-emerald-300 flex items-center gap-1 underline underline-offset-2"
                                   >
                                     {res.label} <ExternalLink className="w-3 h-3" />
                                   </a>
                                 )}
                               </div>
-                              <p className="text-slate-400 text-[11px]">
+                              <p className="text-slate-400 text-[11px] leading-relaxed">
                                 {res?.guide || "Master this technology through its documentation to close your qualification gap."}
                               </p>
                             </div>
@@ -603,10 +745,12 @@ export default function Home() {
 
                     {matched.length > 0 && (
                       <div className="pt-2">
-                        <span className="text-[11px] text-slate-500 block mb-1.5">Already in your toolbelt:</span>
+                        <span className="text-[11px] text-slate-500 font-bold uppercase tracking-wider block mb-1.5">
+                          Verified in your toolbelt:
+                        </span>
                         <div className="flex flex-wrap gap-1.5">
                           {matched.map((s) => (
-                            <span key={s} className="text-[11px] bg-slate-800/90 text-slate-300 border border-slate-700 px-2 py-0.5 rounded">
+                            <span key={s} className="text-[11px] bg-slate-900 text-slate-300 border border-slate-800 px-2 py-0.5 rounded font-medium">
                               ✓ {s}
                             </span>
                           ))}
@@ -621,21 +765,21 @@ export default function Home() {
             <div className="mt-6 pt-4 border-t border-slate-800 flex justify-between gap-2">
               <button
                 onClick={(e) => handleDeleteOpportunity(activeDetailModal.id, e as unknown as React.MouseEvent)}
-                className="px-3 py-2 rounded-lg border border-rose-900/60 bg-rose-950/40 hover:bg-rose-900/60 text-xs font-semibold text-rose-300 transition flex items-center gap-1.5"
+                className="px-3.5 py-2 rounded-xl border border-rose-900/60 bg-rose-950/40 hover:bg-rose-900/60 text-xs font-semibold text-rose-300 transition flex items-center gap-1.5"
               >
-                <Trash2 className="w-3.5 h-3.5" /> Delete
+                <Trash2 className="w-3.5 h-3.5" /> Remove
               </button>
 
               <div className="flex gap-2">
                 <button
                   onClick={() => toggleBookmark(activeDetailModal.id)}
-                  className="px-4 py-2 rounded-lg border border-slate-700 bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 transition"
+                  className="px-4 py-2 rounded-xl border border-slate-700 bg-slate-900 hover:bg-slate-800 text-xs font-semibold text-slate-200 transition"
                 >
                   {savedIds.includes(activeDetailModal.id) ? "Remove Bookmark" : "Save Opportunity"}
                 </button>
                 <button
                   onClick={() => setActiveDetailModal(null)}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow"
+                  className="px-5 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-xl text-xs font-bold shadow"
                 >
                   Done
                 </button>
@@ -647,21 +791,21 @@ export default function Home() {
 
       {/* Skill Lens Modal */}
       {isSkillModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl relative">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+          <div className="bg-[#0b101c] border border-slate-800 rounded-3xl max-w-lg w-full p-6 shadow-2xl relative">
             <button
               onClick={() => setIsSkillModalOpen(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-100 p-1 rounded-lg"
+              className="absolute top-5 right-5 text-slate-400 hover:text-white p-1 rounded-lg"
             >
               <X className="w-5 h-5" />
             </button>
 
             <div className="flex items-center gap-2 mb-2">
-              <Sparkles className="w-5 h-5 text-indigo-400" />
-              <h3 className="text-lg font-bold text-slate-100">Configure Your Skill Lens</h3>
+              <Sparkles className="w-5 h-5 text-emerald-400" />
+              <h3 className="text-lg font-bold text-white">Calibrate Skill Lens</h3>
             </div>
             <p className="text-xs text-slate-400 mb-6">
-              Select all technologies you currently know. Match percentages and skill gap tags will recalculate in real-time.
+              Toggle your verified competencies. Real-time match scores and custom gap roadmaps recalculate instantly across all roles.
             </p>
 
             <div className="flex flex-wrap gap-2 mb-8">
@@ -671,31 +815,31 @@ export default function Home() {
                   <button
                     key={skill}
                     onClick={() => toggleSkill(skill)}
-                    className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition flex items-center gap-1.5 ${
+                    className={`text-xs px-3 py-1.5 rounded-xl border font-medium transition flex items-center gap-1.5 ${
                       isSelected
-                        ? "bg-indigo-600 border-indigo-500 text-white shadow-sm shadow-indigo-500/20"
-                        : "bg-slate-800/80 border-slate-700 text-slate-300 hover:border-slate-600"
+                        ? "bg-emerald-500 border-emerald-400 text-slate-950 font-bold shadow-md shadow-emerald-500/20"
+                        : "bg-slate-900/90 border-slate-800 text-slate-300 hover:border-slate-700"
                     }`}
                   >
-                    {isSelected && <Check className="w-3.5 h-3.5" />}
+                    {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
                     {skill}
                   </button>
                 );
               })}
             </div>
 
-            <div className="flex justify-end gap-3 pt-4 border-t border-slate-800">
+            <div className="flex justify-between items-center pt-4 border-t border-slate-800">
               <button
                 onClick={() => setUserSkills([])}
-                className="text-xs text-slate-400 hover:text-slate-200 px-3 py-2 font-medium"
+                className="text-xs text-slate-400 hover:text-rose-400 font-medium"
               >
                 Clear all
               </button>
               <button
                 onClick={() => setIsSkillModalOpen(false)}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow"
+                className="px-5 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-xl text-xs font-bold shadow"
               >
-                Apply Lens
+                Apply Diagnostic Lens
               </button>
             </div>
           </div>
@@ -704,18 +848,18 @@ export default function Home() {
 
       {/* Post Modal */}
       {isPostModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl relative">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+          <div className="bg-[#0b101c] border border-slate-800 rounded-3xl max-w-lg w-full p-6 shadow-2xl relative">
             <button
               onClick={() => setIsPostModalOpen(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-100 p-1 rounded-lg"
+              className="absolute top-5 right-5 text-slate-400 hover:text-white p-1 rounded-lg"
             >
               <X className="w-5 h-5" />
             </button>
 
-            <h3 className="text-lg font-bold text-slate-100 mb-1">Post an Opportunity</h3>
+            <h3 className="text-lg font-bold text-white mb-1">Post Opportunity</h3>
             <p className="text-xs text-slate-400 mb-5">
-              Add a real role, internship, or hackathon track directly into the database.
+              Publish a verified role directly into the PostgreSQL opportunities feed.
             </p>
 
             <form onSubmit={handleCreateOpportunity} className="space-y-4">
@@ -724,23 +868,23 @@ export default function Home() {
                 <input
                   type="text"
                   required
-                  placeholder="e.g. AI Research Intern"
+                  placeholder="e.g. Distributed Systems Fellow"
                   value={newTitle}
                   onChange={(e) => setNewTitle(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  className="w-full bg-[#070b12] border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Company / Org</label>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Company / Organization</label>
                   <input
                     type="text"
                     required
-                    placeholder="e.g. Google Cloud"
+                    placeholder="e.g. Supabase Labs"
                     value={newCompany}
                     onChange={(e) => setNewCompany(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    className="w-full bg-[#070b12] border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   />
                 </div>
                 <div>
@@ -748,20 +892,20 @@ export default function Home() {
                   <input
                     type="text"
                     required
-                    placeholder="e.g. Remote or Hyderabad"
+                    placeholder="e.g. Remote / Bengaluru"
                     value={newLocation}
                     onChange={(e) => setNewLocation(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    className="w-full bg-[#070b12] border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Opportunity Type</label>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Role Classification</label>
                 <select
                   value={newType}
                   onChange={(e) => setNewType(e.target.value as Opportunity["type"])}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  className="w-full bg-[#070b12] border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                 >
                   <option value="Internship">Internship</option>
                   <option value="Open Source">Open Source</option>
@@ -772,9 +916,9 @@ export default function Home() {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  Required Skills (Select applicable)
+                  Required Competencies (Select applicable)
                 </label>
-                <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto p-2 bg-slate-950 rounded-lg border border-slate-800">
+                <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto p-2 bg-[#070b12] rounded-xl border border-slate-800">
                   {ALL_SKILLS.map((skill) => {
                     const isSelected = newSkills.includes(skill);
                     return (
@@ -782,9 +926,9 @@ export default function Home() {
                         type="button"
                         key={skill}
                         onClick={() => toggleNewPostSkill(skill)}
-                        className={`text-[11px] px-2.5 py-1 rounded border transition ${
+                        className={`text-[11px] px-2.5 py-1 rounded-lg border transition ${
                           isSelected
-                            ? "bg-indigo-600 border-indigo-500 text-white"
+                            ? "bg-emerald-500 border-emerald-400 text-slate-950 font-bold"
                             : "bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200"
                         }`}
                       >
@@ -800,10 +944,10 @@ export default function Home() {
                 <textarea
                   rows={3}
                   required
-                  placeholder="Summary of responsibilities and scope..."
+                  placeholder="Summary of scope, expectations, and core challenges..."
                   value={newDescription}
                   onChange={(e) => setNewDescription(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  className="w-full bg-[#070b12] border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                 />
               </div>
 
@@ -818,13 +962,101 @@ export default function Home() {
                 <button
                   type="submit"
                   disabled={submitting}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow"
+                  className="px-5 py-2 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow"
                 >
                   {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  {submitting ? "Publishing..." : "Publish to Database"}
+                  {submitting ? "Publishing..." : "Publish Opportunity"}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Supabase Auth Modal (Login / Sign Up) */}
+      {isAuthModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+          <div className="bg-[#0b101c] border border-slate-800 rounded-3xl max-w-sm w-full p-6 shadow-2xl relative">
+            <button
+              onClick={() => setIsAuthModalOpen(false)}
+              className="absolute top-5 right-5 text-slate-400 hover:text-white p-1 rounded-lg"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <h3 className="text-lg font-bold text-white mb-1">
+              {authMode === "login" ? "Sign In to OpportunityLens" : "Create Developer Account"}
+            </h3>
+            <p className="text-xs text-slate-400 mb-5">
+              {authMode === "login" 
+                ? "Access your saved roles and personal skill preferences." 
+                : "Create an account to synchronize your profile and posted opportunities."}
+            </p>
+
+            {authError && (
+              <div className="mb-4 p-2.5 rounded-lg bg-rose-950/40 border border-rose-900/50 text-rose-300 text-xs">
+                {authError}
+              </div>
+            )}
+
+            <form onSubmit={handleAuth} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Email</label>
+                <input
+                  type="email"
+                  required
+                  placeholder="name@example.com"
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  className="w-full bg-[#070b12] border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Password</label>
+                <input
+                  type="password"
+                  required
+                  placeholder="••••••••"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  className="w-full bg-[#070b12] border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={authLoading}
+                className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow"
+              >
+                {authLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                {authMode === "login" ? "Sign In" : "Register"}
+              </button>
+            </form>
+
+            <div className="mt-4 pt-3 border-t border-slate-800/80 text-center">
+              {authMode === "login" ? (
+                <button
+                  onClick={() => {
+                    setAuthMode("signup");
+                    setAuthError("");
+                  }}
+                  className="text-xs text-slate-400 hover:text-emerald-400 transition"
+                >
+                  Don&apos;t have an account? <span className="underline">Sign up</span>
+                </button>
+              ) : (
+                <button
+                  onClick={() => {
+                    setAuthMode("login");
+                    setAuthError("");
+                  }}
+                  className="text-xs text-slate-400 hover:text-emerald-400 transition"
+                >
+                  Already have an account? <span className="underline">Sign in</span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
