@@ -12,9 +12,14 @@ import {
   X, 
   AlertCircle, 
   Check, 
-  Layers,
-  Loader2,
-  PlusCircle
+  Layers, 
+  Loader2, 
+  PlusCircle,
+  ExternalLink,
+  BookOpen,
+  MapPin,
+  Building2,
+  Calendar
 } from "lucide-react";
 
 interface Opportunity {
@@ -25,6 +30,7 @@ interface Opportunity {
   location: string;
   required_skills: string[];
   description: string;
+  created_at?: string;
 }
 
 const ALL_SKILLS = [
@@ -41,6 +47,65 @@ const ALL_SKILLS = [
   "REST APIs"
 ];
 
+// Curated fast-track learning resources for gap closing
+const SKILL_RESOURCES: Record<string, { label: string; url: string; guide: string }> = {
+  "React": {
+    label: "React.dev Official Docs",
+    url: "https://react.dev/learn",
+    guide: "Master component state, props, and standard Hooks (useState, useEffect, useMemo)."
+  },
+  "Next.js": {
+    label: "Next.js App Router Learn Track",
+    url: "https://nextjs.org/learn",
+    guide: "Understand Server vs. Client Components, Server Actions, and file-based dynamic routing."
+  },
+  "TypeScript": {
+    label: "TypeScript for Javascript Programmers",
+    url: "https://www.typescriptlang.org/docs/handbook/typescript-in-5-minutes.html",
+    guide: "Focus on Interfaces, Types, Generics, and strict null checks."
+  },
+  "JavaScript": {
+    label: "MDN JavaScript Fundamentals",
+    url: "https://developer.mozilla.org/en-US/docs/Web/JavaScript",
+    guide: "Review closures, Event Loop, asynchronous Promises, and modern ES6+ methods."
+  },
+  "Tailwind": {
+    label: "Tailwind CSS Quick Start",
+    url: "https://tailwindcss.com/docs/utility-first",
+    guide: "Learn utility classes, responsive prefixes (sm:, md:), and pseudo-class styling."
+  },
+  "Node.js": {
+    label: "Node.js Architecture Guide",
+    url: "https://nodejs.org/en/learn/getting-started/introduction-to-nodejs",
+    guide: "Understand asynchronous event-driven runtime, Express/Fastify frameworks, and file streams."
+  },
+  "PostgreSQL": {
+    label: "PostgreSQL Tutorial & Schema Basics",
+    url: "https://www.postgresqltutorial.com/",
+    guide: "Write indexed relational queries, Foreign Key constraints, and joins across multiple tables."
+  },
+  "Python": {
+    label: "Official Python Tutorial",
+    url: "https://docs.python.org/3/tutorial/",
+    guide: "Cover list comprehensions, object-oriented concepts, and fast scripting APIs."
+  },
+  "Git": {
+    label: "GitHub Git Handbook",
+    url: "https://docs.github.com/en/get-started/using-git/about-git",
+    guide: "Learn branch rebasing, merge conflict resolution, and PR workflows."
+  },
+  "Docker": {
+    label: "Docker Curriculum for Beginners",
+    url: "https://docker-curriculum.com/",
+    guide: "Practice writing reproducible Dockerfiles, building images, and multi-container docker-compose."
+  },
+  "REST APIs": {
+    label: "RESTful API Design Best Practices",
+    url: "https://restfulapi.net/",
+    guide: "Learn standard HTTP response codes, idempotency, pagination, and payload validation."
+  }
+};
+
 export default function Home() {
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [loading, setLoading] = useState(true);
@@ -50,7 +115,12 @@ export default function Home() {
   // Modals
   const [isSkillModalOpen, setIsSkillModalOpen] = useState(false);
   const [isPostModalOpen, setIsPostModalOpen] = useState(false);
+  const [activeDetailModal, setActiveDetailModal] = useState<Opportunity | null>(null);
+
+  // User Skills & Saved Bookmarks
   const [userSkills, setUserSkills] = useState<string[]>(["React", "JavaScript", "Git"]);
+  const [savedIds, setSavedIds] = useState<string[]>([]);
+  const [showingSavedOnly, setShowingSavedOnly] = useState(false);
 
   // Form State for Posting
   const [newTitle, setNewTitle] = useState("");
@@ -80,9 +150,18 @@ export default function Home() {
     }
   }, []);
 
-  useEffect(() => {
+ useEffect(() => {
+    // Load saved bookmarks from localStorage
+    const saved = localStorage.getItem("saved_opportunities");
+    if (saved) {
+      try {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setSavedIds(JSON.parse(saved));
+      } catch (e) {
+        console.error(e);
+      }
+    }
     let ignore = false;
-
     async function loadData() {
       try {
         const { data, error } = await supabase
@@ -112,6 +191,14 @@ export default function Home() {
       ignore = true;
     };
   }, []);
+
+  const toggleBookmark = (id: string) => {
+    const next = savedIds.includes(id) 
+      ? savedIds.filter(item => item !== id) 
+      : [...savedIds, id];
+    setSavedIds(next);
+    localStorage.setItem("saved_opportunities", JSON.stringify(next));
+  };
 
   const toggleSkill = (skill: string) => {
     if (userSkills.includes(skill)) {
@@ -177,7 +264,8 @@ export default function Home() {
       item.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
       skills.some((tag) => tag.toLowerCase().includes(searchTerm.toLowerCase()));
     const matchesFilter = selectedFilter === "All" || item.type === selectedFilter;
-    return matchesSearch && matchesFilter;
+    const matchesSaved = !showingSavedOnly || savedIds.includes(item.id);
+    return matchesSearch && matchesFilter && matchesSaved;
   });
 
   return (
@@ -194,17 +282,29 @@ export default function Home() {
             </span>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5 sm:gap-3">
+            <button
+              onClick={() => setShowingSavedOnly(!showingSavedOnly)}
+              className={`px-3 py-2 rounded-lg border text-xs sm:text-sm font-medium flex items-center gap-1.5 transition ${
+                showingSavedOnly 
+                  ? "bg-amber-500/10 border-amber-500/40 text-amber-300"
+                  : "bg-slate-900 border-slate-800 text-slate-300 hover:text-white"
+              }`}
+            >
+              <Bookmark className={`w-3.5 h-3.5 ${showingSavedOnly ? "fill-amber-400 text-amber-400" : ""}`} />
+              Saved ({savedIds.length})
+            </button>
+
             <button
               onClick={() => setIsPostModalOpen(true)}
-              className="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs sm:text-sm font-medium flex items-center gap-1.5 transition"
+              className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs sm:text-sm font-medium flex items-center gap-1.5 transition"
             >
               <PlusCircle className="w-4 h-4 text-slate-300" /> Post Opportunity
             </button>
 
             <button
               onClick={() => setIsSkillModalOpen(true)}
-              className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 transition text-white text-xs sm:text-sm font-medium flex items-center gap-2 shadow-sm"
+              className="px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 transition text-white text-xs sm:text-sm font-medium flex items-center gap-2 shadow-sm"
             >
               <Sparkles className="w-4 h-4" /> Run Skill Lens ({userSkills.length})
             </button>
@@ -276,7 +376,9 @@ export default function Home() {
           </div>
         ) : filteredOpportunities.length === 0 ? (
           <div className="text-center py-20 text-slate-500 text-sm">
-            No opportunities found matching your criteria.
+            {showingSavedOnly 
+              ? "You haven't bookmarked any opportunities yet." 
+              : "No opportunities found matching your criteria."}
           </div>
         ) : (
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
@@ -284,6 +386,7 @@ export default function Home() {
               const { score, matched, missing } = calculateMatch(op.required_skills);
               const isHighMatch = score >= 75;
               const isMediumMatch = score >= 50 && score < 75;
+              const isBookmarked = savedIds.includes(op.id);
 
               return (
                 <div
@@ -314,7 +417,7 @@ export default function Home() {
                     <p className="text-sm text-slate-400 font-medium">
                       {op.company} • {op.location}
                     </p>
-                    <p className="mt-3 text-xs text-slate-400 leading-relaxed">
+                    <p className="mt-3 text-xs text-slate-400 leading-relaxed line-clamp-3">
                       {op.description}
                     </p>
 
@@ -354,10 +457,21 @@ export default function Home() {
                   </div>
 
                   <div className="mt-6 pt-4 border-t border-slate-800/60 flex items-center justify-between text-xs">
-                    <button className="text-slate-400 hover:text-slate-200 transition flex items-center gap-1 font-medium">
-                      <Bookmark className="w-3.5 h-3.5" /> Save
+                    <button 
+                      onClick={() => toggleBookmark(op.id)}
+                      className={`transition flex items-center gap-1 font-medium ${
+                        isBookmarked 
+                          ? "text-amber-400 hover:text-amber-300" 
+                          : "text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      <Bookmark className={`w-3.5 h-3.5 ${isBookmarked ? "fill-amber-400" : ""}`} /> 
+                      {isBookmarked ? "Saved" : "Save"}
                     </button>
-                    <button className="text-indigo-400 hover:text-indigo-300 transition flex items-center gap-1 font-semibold">
+                    <button 
+                      onClick={() => setActiveDetailModal(op)}
+                      className="text-indigo-400 hover:text-indigo-300 transition flex items-center gap-1 font-semibold cursor-pointer"
+                    >
                       View Details <ArrowUpRight className="w-3.5 h-3.5" />
                     </button>
                   </div>
@@ -367,6 +481,124 @@ export default function Home() {
           </div>
         )}
       </main>
+
+      {/* Opportunity Detail & Gap Roadmap Modal */}
+      {activeDetailModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-xl w-full p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto">
+            <button
+              onClick={() => setActiveDetailModal(null)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-100 p-1 rounded-lg"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-[11px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md bg-indigo-950 text-indigo-300 border border-indigo-800/50">
+                {activeDetailModal.type}
+              </span>
+              {activeDetailModal.created_at && (
+                <span className="text-xs text-slate-500 flex items-center gap-1">
+                  <Calendar className="w-3 h-3" /> {new Date(activeDetailModal.created_at).toLocaleDateString()}
+                </span>
+              )}
+            </div>
+
+            <h2 className="text-xl font-bold text-slate-100">{activeDetailModal.title}</h2>
+            <div className="flex items-center gap-3 text-xs text-slate-400 mt-1 mb-4">
+              <span className="flex items-center gap-1"><Building2 className="w-3.5 h-3.5" /> {activeDetailModal.company}</span>
+              <span>•</span>
+              <span className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5" /> {activeDetailModal.location}</span>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-300 leading-relaxed mb-6">
+              <p className="font-semibold text-slate-200 mb-1">Description:</p>
+              {activeDetailModal.description}
+            </div>
+
+            {/* Gap Action Plan */}
+            <div>
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-1.5">
+                <BookOpen className="w-4 h-4 text-indigo-400" /> Curated Skill Gap Action Plan
+              </h3>
+
+              {(() => {
+                const { score, missing, matched } = calculateMatch(activeDetailModal.required_skills);
+                return (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between text-xs p-2.5 rounded-lg bg-slate-950 border border-slate-800">
+                      <span>Overall Match Level:</span>
+                      <span className="font-bold text-indigo-300">{score}%</span>
+                    </div>
+
+                    {missing.length === 0 ? (
+                      <div className="p-3 rounded-lg bg-emerald-950/40 border border-emerald-800/30 text-emerald-300 text-xs flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4" /> You meet all prerequisites for this position!
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {missing.map((skill) => {
+                          const res = SKILL_RESOURCES[skill];
+                          return (
+                            <div key={skill} className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 flex flex-col gap-1.5 text-xs">
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-amber-300 flex items-center gap-1.5">
+                                  <AlertCircle className="w-3.5 h-3.5 text-amber-400" /> Missing: {skill}
+                                </span>
+                                {res && (
+                                  <a
+                                    href={res.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 underline underline-offset-2"
+                                  >
+                                    {res.label} <ExternalLink className="w-3 h-3" />
+                                  </a>
+                                )}
+                              </div>
+                              <p className="text-slate-400 text-[11px]">
+                                {res?.guide || "Master this technology through its documentation to close your qualification gap."}
+                              </p>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {matched.length > 0 && (
+                      <div className="pt-2">
+                        <span className="text-[11px] text-slate-500 block mb-1.5">Already in your toolbelt:</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {matched.map((s) => (
+                            <span key={s} className="text-[11px] bg-slate-800/90 text-slate-300 border border-slate-700 px-2 py-0.5 rounded">
+                              ✓ {s}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+
+            <div className="mt-6 pt-4 border-t border-slate-800 flex justify-end gap-2">
+              <button
+                onClick={() => toggleBookmark(activeDetailModal.id)}
+                className="px-4 py-2 rounded-lg border border-slate-700 bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 transition"
+              >
+                {savedIds.includes(activeDetailModal.id) ? "Remove Bookmark" : "Save Opportunity"}
+              </button>
+              <button
+                onClick={() => setActiveDetailModal(null)}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Skill Lens Modal */}
       {isSkillModalOpen && (
