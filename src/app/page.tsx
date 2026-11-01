@@ -19,7 +19,8 @@ import {
   BookOpen,
   MapPin,
   Building2,
-  Calendar
+  Calendar,
+  Trash2
 } from "lucide-react";
 
 interface Opportunity {
@@ -47,7 +48,6 @@ const ALL_SKILLS = [
   "REST APIs"
 ];
 
-// Curated fast-track learning resources for gap closing
 const SKILL_RESOURCES: Record<string, { label: string; url: string; guide: string }> = {
   "React": {
     label: "React.dev Official Docs",
@@ -117,12 +117,12 @@ export default function Home() {
   const [isPostModalOpen, setIsPostModalOpen] = useState(false);
   const [activeDetailModal, setActiveDetailModal] = useState<Opportunity | null>(null);
 
-  // User Skills & Saved Bookmarks
+  // User Skills & Bookmarks
   const [userSkills, setUserSkills] = useState<string[]>(["React", "JavaScript", "Git"]);
   const [savedIds, setSavedIds] = useState<string[]>([]);
   const [showingSavedOnly, setShowingSavedOnly] = useState(false);
 
-  // Form State for Posting
+  // Form State
   const [newTitle, setNewTitle] = useState("");
   const [newCompany, setNewCompany] = useState("");
   const [newType, setNewType] = useState<Opportunity["type"]>("Internship");
@@ -130,6 +130,7 @@ export default function Home() {
   const [newDescription, setNewDescription] = useState("");
   const [newSkills, setNewSkills] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const fetchOpportunities = useCallback(async () => {
     try {
@@ -150,8 +151,7 @@ export default function Home() {
     }
   }, []);
 
- useEffect(() => {
-    // Load saved bookmarks from localStorage
+  useEffect(() => {
     const saved = localStorage.getItem("saved_opportunities");
     if (saved) {
       try {
@@ -161,8 +161,9 @@ export default function Home() {
         console.error(e);
       }
     }
+
     let ignore = false;
-    async function loadData() {
+    async function loadInitial() {
       try {
         const { data, error } = await supabase
           .from("opportunities")
@@ -170,27 +171,37 @@ export default function Home() {
           .order("created_at", { ascending: false });
 
         if (!ignore) {
-          if (error) {
-            console.error("Error fetching opportunities:", error);
-          } else if (data) {
-            setOpportunities(data as Opportunity[]);
-          }
+          if (error) console.error("Error:", error);
+          else if (data) setOpportunities(data as Opportunity[]);
           setLoading(false);
         }
       } catch (err) {
         if (!ignore) {
-          console.error("Fetch exception:", err);
+          console.error(err);
           setLoading(false);
         }
       }
     }
 
-    loadData();
+    loadInitial();
+
+    // Supabase Realtime Subscription: auto-sync new posts & deletions
+    const channel = supabase
+      .channel("realtime-opportunities")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "opportunities" },
+        () => {
+          fetchOpportunities();
+        }
+      )
+      .subscribe();
 
     return () => {
       ignore = true;
+      supabase.removeChannel(channel);
     };
-  }, []);
+  }, [fetchOpportunities]);
 
   const toggleBookmark = (id: string) => {
     const next = savedIds.includes(id) 
@@ -201,19 +212,15 @@ export default function Home() {
   };
 
   const toggleSkill = (skill: string) => {
-    if (userSkills.includes(skill)) {
-      setUserSkills(userSkills.filter((s) => s !== skill));
-    } else {
-      setUserSkills([...userSkills, skill]);
-    }
+    setUserSkills(prev => 
+      prev.includes(skill) ? prev.filter(s => s !== skill) : [...prev, skill]
+    );
   };
 
   const toggleNewPostSkill = (skill: string) => {
-    if (newSkills.includes(skill)) {
-      setNewSkills(newSkills.filter((s) => s !== skill));
-    } else {
-      setNewSkills([...newSkills, skill]);
-    }
+    setNewSkills(prev => 
+      prev.includes(skill) ? prev.filter(s => s !== skill) : [...prev, skill]
+    );
   };
 
   const handleCreateOpportunity = async (e: React.FormEvent) => {
@@ -239,7 +246,7 @@ export default function Home() {
 
     if (error) {
       console.error("Insert error:", error);
-      alert("Failed to create opportunity. Check console.");
+      alert("Failed to create opportunity.");
     } else {
       setNewTitle("");
       setNewCompany("");
@@ -247,6 +254,23 @@ export default function Home() {
       setNewSkills([]);
       setIsPostModalOpen(false);
       fetchOpportunities();
+    }
+  };
+
+  const handleDeleteOpportunity = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm("Are you sure you want to remove this opportunity?")) return;
+
+    setDeletingId(id);
+    const { error } = await supabase.from("opportunities").delete().eq("id", id);
+    setDeletingId(null);
+
+    if (error) {
+      console.error("Delete error:", error);
+      alert("Failed to delete opportunity.");
+    } else {
+      setOpportunities(prev => prev.filter(op => op.id !== id));
+      if (activeDetailModal?.id === id) setActiveDetailModal(null);
     }
   };
 
@@ -270,7 +294,7 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 selection:bg-indigo-500 selection:text-white">
-      {/* Top Navigation */}
+      {/* Header */}
       <header className="border-b border-slate-800 bg-slate-900/60 backdrop-blur-md sticky top-0 z-40">
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
@@ -282,7 +306,7 @@ export default function Home() {
             </span>
           </div>
 
-          <div className="flex items-center gap-2.5 sm:gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             <button
               onClick={() => setShowingSavedOnly(!showingSavedOnly)}
               className={`px-3 py-2 rounded-lg border text-xs sm:text-sm font-medium flex items-center gap-1.5 transition ${
@@ -297,7 +321,7 @@ export default function Home() {
 
             <button
               onClick={() => setIsPostModalOpen(true)}
-              className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs sm:text-sm font-medium flex items-center gap-1.5 transition"
+              className="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs sm:text-sm font-medium flex items-center gap-1.5 transition"
             >
               <PlusCircle className="w-4 h-4 text-slate-300" /> Post Opportunity
             </button>
@@ -312,7 +336,7 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Hero Section */}
+      {/* Hero */}
       <section className="max-w-6xl mx-auto px-6 pt-16 pb-12 text-center">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 text-xs font-semibold mb-6">
           <Layers className="w-3.5 h-3.5" /> Diagnostic & Opportunity Engine
@@ -327,7 +351,7 @@ export default function Home() {
           Configure your current toolbelt with the Skill Lens. See exact match percentages and identify missing prerequisites.
         </p>
 
-        {/* Search & Category Filter */}
+        {/* Filter / Search */}
         <div className="mt-10 max-w-2xl mx-auto flex flex-col gap-4">
           <div className="relative">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
@@ -358,7 +382,7 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Opportunity Grid */}
+      {/* Grid */}
       <main className="max-w-6xl mx-auto px-6 pb-20">
         <div className="flex items-center justify-between border-b border-slate-800/80 pb-4 mb-6">
           <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-2">
@@ -387,11 +411,12 @@ export default function Home() {
               const isHighMatch = score >= 75;
               const isMediumMatch = score >= 50 && score < 75;
               const isBookmarked = savedIds.includes(op.id);
+              const isDeleting = deletingId === op.id;
 
               return (
                 <div
                   key={op.id}
-                  className="group border border-slate-800/90 rounded-2xl p-5 bg-slate-900/40 hover:bg-slate-900/80 hover:border-slate-700 transition flex flex-col justify-between"
+                  className="group border border-slate-800/90 rounded-2xl p-5 bg-slate-900/40 hover:bg-slate-900/80 hover:border-slate-700 transition flex flex-col justify-between relative"
                 >
                   <div>
                     <div className="flex items-start justify-between gap-3">
@@ -457,17 +482,29 @@ export default function Home() {
                   </div>
 
                   <div className="mt-6 pt-4 border-t border-slate-800/60 flex items-center justify-between text-xs">
-                    <button 
-                      onClick={() => toggleBookmark(op.id)}
-                      className={`transition flex items-center gap-1 font-medium ${
-                        isBookmarked 
-                          ? "text-amber-400 hover:text-amber-300" 
-                          : "text-slate-400 hover:text-slate-200"
-                      }`}
-                    >
-                      <Bookmark className={`w-3.5 h-3.5 ${isBookmarked ? "fill-amber-400" : ""}`} /> 
-                      {isBookmarked ? "Saved" : "Save"}
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button 
+                        onClick={() => toggleBookmark(op.id)}
+                        className={`transition flex items-center gap-1 font-medium ${
+                          isBookmarked 
+                            ? "text-amber-400 hover:text-amber-300" 
+                            : "text-slate-400 hover:text-slate-200"
+                        }`}
+                      >
+                        <Bookmark className={`w-3.5 h-3.5 ${isBookmarked ? "fill-amber-400" : ""}`} /> 
+                        {isBookmarked ? "Saved" : "Save"}
+                      </button>
+
+                      <button
+                        onClick={(e) => handleDeleteOpportunity(op.id, e)}
+                        disabled={isDeleting}
+                        title="Delete this role"
+                        className="text-slate-500 hover:text-rose-400 transition p-1"
+                      >
+                        {isDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-400" /> : <Trash2 className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+
                     <button 
                       onClick={() => setActiveDetailModal(op)}
                       className="text-indigo-400 hover:text-indigo-300 transition flex items-center gap-1 font-semibold cursor-pointer"
@@ -482,7 +519,7 @@ export default function Home() {
         )}
       </main>
 
-      {/* Opportunity Detail & Gap Roadmap Modal */}
+      {/* Details & Roadmap Modal */}
       {activeDetailModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-xl w-full p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto">
@@ -516,7 +553,6 @@ export default function Home() {
               {activeDetailModal.description}
             </div>
 
-            {/* Gap Action Plan */}
             <div>
               <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-1.5">
                 <BookOpen className="w-4 h-4 text-indigo-400" /> Curated Skill Gap Action Plan
@@ -582,19 +618,28 @@ export default function Home() {
               })()}
             </div>
 
-            <div className="mt-6 pt-4 border-t border-slate-800 flex justify-end gap-2">
+            <div className="mt-6 pt-4 border-t border-slate-800 flex justify-between gap-2">
               <button
-                onClick={() => toggleBookmark(activeDetailModal.id)}
-                className="px-4 py-2 rounded-lg border border-slate-700 bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 transition"
+                onClick={(e) => handleDeleteOpportunity(activeDetailModal.id, e as unknown as React.MouseEvent)}
+                className="px-3 py-2 rounded-lg border border-rose-900/60 bg-rose-950/40 hover:bg-rose-900/60 text-xs font-semibold text-rose-300 transition flex items-center gap-1.5"
               >
-                {savedIds.includes(activeDetailModal.id) ? "Remove Bookmark" : "Save Opportunity"}
+                <Trash2 className="w-3.5 h-3.5" /> Delete
               </button>
-              <button
-                onClick={() => setActiveDetailModal(null)}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow"
-              >
-                Done
-              </button>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => toggleBookmark(activeDetailModal.id)}
+                  className="px-4 py-2 rounded-lg border border-slate-700 bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 transition"
+                >
+                  {savedIds.includes(activeDetailModal.id) ? "Remove Bookmark" : "Save Opportunity"}
+                </button>
+                <button
+                  onClick={() => setActiveDetailModal(null)}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow"
+                >
+                  Done
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -657,7 +702,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* Post Opportunity Modal */}
+      {/* Post Modal */}
       {isPostModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl relative">
