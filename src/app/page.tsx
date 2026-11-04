@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import type { User } from "@supabase/supabase-js";
 import { 
@@ -8,7 +8,6 @@ import {
   Target, 
   ArrowUpRight, 
   CheckCircle2, 
-  Bookmark, 
   Sparkles, 
   X, 
   AlertCircle, 
@@ -25,7 +24,11 @@ import {
   User as UserIcon, 
   LogOut, 
   Flame, 
-  Send
+  Send,
+  FileText,
+  ChevronLeft,
+  ChevronRight,
+  Briefcase
 } from "lucide-react";
 
 interface Opportunity {
@@ -40,6 +43,8 @@ interface Opportunity {
   user_id?: string;
   created_at?: string;
 }
+
+type Stage = "Saved" | "Applied" | "Interviewing" | "Offer";
 
 const ALL_SKILLS = [
   "React",
@@ -56,62 +61,20 @@ const ALL_SKILLS = [
 ];
 
 const SKILL_RESOURCES: Record<string, { label: string; url: string; guide: string }> = {
-  "React": {
-    label: "React.dev Official Docs",
-    url: "https://react.dev/learn",
-    guide: "Master component state, props, and standard Hooks (useState, useEffect, useMemo)."
-  },
-  "Next.js": {
-    label: "Next.js App Router Learn Track",
-    url: "https://nextjs.org/learn",
-    guide: "Understand Server vs. Client Components, Server Actions, and file-based dynamic routing."
-  },
-  "TypeScript": {
-    label: "TypeScript for Javascript Programmers",
-    url: "https://www.typescriptlang.org/docs/handbook/typescript-in-5-minutes.html",
-    guide: "Focus on Interfaces, Types, Generics, and strict null checks."
-  },
-  "JavaScript": {
-    label: "MDN JavaScript Fundamentals",
-    url: "https://developer.mozilla.org/en-US/docs/Web/JavaScript",
-    guide: "Review closures, Event Loop, asynchronous Promises, and modern ES6+ methods."
-  },
-  "Tailwind": {
-    label: "Tailwind CSS Quick Start",
-    url: "https://tailwindcss.com/docs/utility-first",
-    guide: "Learn utility classes, responsive prefixes (sm:, md:), and pseudo-class styling."
-  },
-  "Node.js": {
-    label: "Node.js Architecture Guide",
-    url: "https://nodejs.org/en/learn/getting-started/introduction-to-nodejs",
-    guide: "Understand asynchronous event-driven runtime, Express/Fastify frameworks, and file streams."
-  },
-  "PostgreSQL": {
-    label: "PostgreSQL Tutorial & Schema Basics",
-    url: "https://www.postgresqltutorial.com/",
-    guide: "Write indexed relational queries, Foreign Key constraints, and joins across multiple tables."
-  },
-  "Python": {
-    label: "Official Python Tutorial",
-    url: "https://docs.python.org/3/tutorial/",
-    guide: "Cover list comprehensions, object-oriented concepts, and fast scripting APIs."
-  },
-  "Git": {
-    label: "GitHub Git Handbook",
-    url: "https://docs.github.com/en/get-started/using-git/about-git",
-    guide: "Learn branch rebasing, merge conflict resolution, and PR workflows."
-  },
-  "Docker": {
-    label: "Docker Curriculum for Beginners",
-    url: "https://docker-curriculum.com/",
-    guide: "Practice writing reproducible Dockerfiles, building images, and multi-container docker-compose."
-  },
-  "REST APIs": {
-    label: "RESTful API Design Best Practices",
-    url: "https://restfulapi.net/",
-    guide: "Learn standard HTTP response codes, idempotency, pagination, and payload validation."
-  }
+  "React": { label: "React.dev Docs", url: "https://react.dev/learn", guide: "Master component state, props, and standard Hooks (useState, useEffect)." },
+  "Next.js": { label: "Next.js Learn", url: "https://nextjs.org/learn", guide: "Understand Server vs Client Components, Server Actions, and App Router routing." },
+  "TypeScript": { label: "TypeScript Handbook", url: "https://www.typescriptlang.org/docs/handbook/typescript-in-5-minutes.html", guide: "Focus on Interfaces, Types, Generics, and strict null checks." },
+  "JavaScript": { label: "MDN JavaScript", url: "https://developer.mozilla.org/en-US/docs/Web/JavaScript", guide: "Review Closures, Event Loop, asynchronous Promises, and modern ES6+ methods." },
+  "Tailwind": { label: "Tailwind CSS", url: "https://tailwindcss.com/docs/utility-first", guide: "Learn utility classes, responsive prefixes (sm:, md:), and pseudo-class styling." },
+  "Node.js": { label: "Node.js Guide", url: "https://nodejs.org/en/learn/getting-started/introduction-to-nodejs", guide: "Understand asynchronous event runtime, Express/Fastify frameworks, and file streams." },
+  "PostgreSQL": { label: "PostgreSQL Tutorial", url: "https://www.postgresqltutorial.com/", guide: "Write indexed relational queries, Foreign Key constraints, and complex joins." },
+  "Python": { label: "Python Tutorial", url: "https://docs.python.org/3/tutorial/", guide: "Cover comprehensions, object-oriented concepts, and fast scripting APIs." },
+  "Git": { label: "GitHub Git Handbook", url: "https://docs.github.com/en/get-started/using-git/about-git", guide: "Learn branch rebasing, merge conflict resolution, and PR workflows." },
+  "Docker": { label: "Docker Curriculum", url: "https://docker-curriculum.com/", guide: "Practice writing reproducible Dockerfiles, building images, and compose." },
+  "REST APIs": { label: "RESTful API Design", url: "https://restfulapi.net/", guide: "Learn standard HTTP response codes, idempotency, pagination, and payload validation." }
 };
+
+const ITEMS_PER_PAGE = 12;
 
 export default function Home() {
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
@@ -119,6 +82,7 @@ export default function Home() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedFilter, setSelectedFilter] = useState("All");
   const [matchThresholdOnly, setMatchThresholdOnly] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
 
   // Authentication State
   const [user, setUser] = useState<User | null>(null);
@@ -129,26 +93,29 @@ export default function Home() {
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState("");
 
-  // Modals & Lens State
+  // Modals
   const [isSkillModalOpen, setIsSkillModalOpen] = useState(false);
   const [isPostModalOpen, setIsPostModalOpen] = useState(false);
+  const [isResumeModalOpen, setIsResumeModalOpen] = useState(false);
+  const [isTrackerModalOpen, setIsTrackerModalOpen] = useState(false);
   const [activeDetailModal, setActiveDetailModal] = useState<Opportunity | null>(null);
+
+  // User Skills & Pipeline Tracking
   const [userSkills, setUserSkills] = useState<string[]>(["React", "JavaScript", "TypeScript", "Git"]);
-  
-  // Lazy init for localStorage to prevent cascading render warnings in useEffect
-  const [savedIds, setSavedIds] = useState<string[]>(() => {
+  const [resumeText, setResumeText] = useState("");
+  const [resumeFeedback, setResumeFeedback] = useState("");
+
+  const [stages, setStages] = useState<Record<string, Stage>>(() => {
     if (typeof window !== "undefined") {
       try {
-        const item = localStorage.getItem("saved_opportunities");
-        return item ? JSON.parse(item) : [];
+        const item = localStorage.getItem("opportunity_stages");
+        return item ? JSON.parse(item) : {};
       } catch {
-        return [];
+        return {};
       }
     }
-    return [];
+    return {};
   });
-  
-  const [showingSavedOnly, setShowingSavedOnly] = useState(false);
 
   // Post Form State
   const [newTitle, setNewTitle] = useState("");
@@ -190,13 +157,15 @@ export default function Home() {
 
       if (data) {
         if (data.selected_skills?.length) setUserSkills(data.selected_skills);
-        if (data.saved_opportunity_ids?.length) setSavedIds(data.saved_opportunity_ids);
+        if (data.application_stages && Object.keys(data.application_stages).length) {
+          setStages(data.application_stages);
+        }
       } else {
         await supabase.from("user_profiles").upsert({
           id: activeUser.id,
           email: activeUser.email,
           selected_skills: ["React", "JavaScript", "TypeScript", "Git"],
-          saved_opportunity_ids: []
+          application_stages: {}
         });
       }
     } catch (err) {
@@ -207,16 +176,12 @@ export default function Home() {
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
-      if (session?.user) {
-        syncUserProfile(session.user);
-      }
+      if (session?.user) syncUserProfile(session.user);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
-      if (session?.user) {
-        syncUserProfile(session.user);
-      }
+      if (session?.user) syncUserProfile(session.user);
     });
 
     let ignore = false;
@@ -260,14 +225,29 @@ export default function Home() {
     };
   }, [fetchOpportunities, syncUserProfile]);
 
-  const handleOAuthLogin = async (provider: "github" | "google") => {
+  const updateStage = async (id: string, stage: Stage | null) => {
+    const next = { ...stages };
+    if (!stage) {
+      delete next[id];
+    } else {
+      next[id] = stage;
+    }
+    setStages(next);
+    localStorage.setItem("opportunity_stages", JSON.stringify(next));
+
+    if (user) {
+      await supabase
+        .from("user_profiles")
+        .upsert({ id: user.id, application_stages: next });
+    }
+  };
+
+  const handleOAuthLogin = async (provider: "github") => {
     setAuthLoading(true);
     setAuthError("");
     const { error } = await supabase.auth.signInWithOAuth({
       provider,
-      options: {
-        redirectTo: window.location.origin
-      }
+      options: { redirectTo: window.location.origin }
     });
     if (error) setAuthError(error.message);
     setAuthLoading(false);
@@ -285,7 +265,7 @@ export default function Home() {
       });
       if (error) setAuthError(error.message);
       else {
-        alert("Account registered! Check your inbox if email verification is enabled.");
+        alert("Account registered! Check your inbox if verification is enabled.");
         setIsAuthModalOpen(false);
         setAuthEmail("");
         setAuthPassword("");
@@ -309,20 +289,6 @@ export default function Home() {
     await supabase.auth.signOut();
   };
 
-  const toggleBookmark = async (id: string) => {
-    const next = savedIds.includes(id) 
-      ? savedIds.filter(item => item !== id) 
-      : [...savedIds, id];
-    setSavedIds(next);
-    localStorage.setItem("saved_opportunities", JSON.stringify(next));
-
-    if (user) {
-      await supabase
-        .from("user_profiles")
-        .upsert({ id: user.id, saved_opportunity_ids: next });
-    }
-  };
-
   const toggleSkill = async (skill: string) => {
     const next = userSkills.includes(skill)
       ? userSkills.filter(s => s !== skill)
@@ -336,10 +302,26 @@ export default function Home() {
     }
   };
 
-  const toggleNewPostSkill = (skill: string) => {
-    setNewSkills(prev => 
-      prev.includes(skill) ? prev.filter(s => s !== skill) : [...prev, skill]
-    );
+  const handleParseResume = () => {
+    if (!resumeText.trim()) return;
+    const lower = resumeText.toLowerCase();
+    const matchedSkills = ALL_SKILLS.filter(skill => lower.includes(skill.toLowerCase()));
+
+    if (matchedSkills.length > 0) {
+      const combined = Array.from(new Set([...userSkills, ...matchedSkills]));
+      setUserSkills(combined);
+      setResumeFeedback(`Extracted ${matchedSkills.length} skills: ${matchedSkills.join(", ")}`);
+      if (user) {
+        supabase.from("user_profiles").upsert({ id: user.id, selected_skills: combined });
+      }
+      setTimeout(() => {
+        setIsResumeModalOpen(false);
+        setResumeFeedback("");
+        setResumeText("");
+      }, 1400);
+    } else {
+      setResumeFeedback("No recognized tech stack keywords found. Check pasting format.");
+    }
   };
 
   const handleCreateOpportunity = async (e: React.FormEvent) => {
@@ -356,7 +338,7 @@ export default function Home() {
         company: newCompany,
         type: newType,
         location: newLocation,
-        apply_url: newApplyUrl || "https://github.com",
+        apply_url: newApplyUrl || `https://github.com/search?q=${encodeURIComponent(newCompany)}`,
         description: newDescription,
         required_skills: newSkills,
         user_id: user?.id ?? null
@@ -393,29 +375,39 @@ export default function Home() {
     } else {
       setOpportunities(prev => prev.filter(op => op.id !== id));
       if (activeDetailModal?.id === id) setActiveDetailModal(null);
+      updateStage(id, null);
     }
   };
 
-  const calculateMatch = (required: string[] = []) => {
+  const calculateMatch = useCallback((required: string[] = []) => {
     if (!required || required.length === 0) return { score: 100, matched: [], missing: [] };
     const matched = required.filter((skill) => userSkills.includes(skill));
     const missing = required.filter((skill) => !userSkills.includes(skill));
     const score = Math.round((matched.length / required.length) * 100);
     return { score, matched, missing };
-  };
+  }, [userSkills]);
 
-  const filteredOpportunities = opportunities.filter((item) => {
-    const skills = item.required_skills || [];
-    const matchesSearch =
-      item.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.company.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      skills.some((tag) => tag.toLowerCase().includes(searchTerm.toLowerCase()));
-    const matchesFilter = selectedFilter === "All" || item.type === selectedFilter;
-    const matchesSaved = !showingSavedOnly || savedIds.includes(item.id);
-    const { score } = calculateMatch(skills);
-    const matchesThreshold = !matchThresholdOnly || score >= 60;
-    return matchesSearch && matchesFilter && matchesSaved && matchesThreshold;
-  });
+  const filteredOpportunities = useMemo(() => {
+    return opportunities.filter((item) => {
+      const skills = item.required_skills || [];
+      const matchesSearch =
+        item.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        item.company.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        skills.some((tag) => tag.toLowerCase().includes(searchTerm.toLowerCase()));
+      const matchesFilter = selectedFilter === "All" || item.type === selectedFilter;
+      const { score } = calculateMatch(skills);
+      const matchesThreshold = !matchThresholdOnly || score >= 60;
+      return matchesSearch && matchesFilter && matchesThreshold;
+    });
+  }, [opportunities, searchTerm, selectedFilter, matchThresholdOnly, calculateMatch]);
+
+  const totalPages = Math.ceil(filteredOpportunities.length / ITEMS_PER_PAGE) || 1;
+  const paginatedOpportunities = useMemo(() => {
+    const start = (currentPage - 1) * ITEMS_PER_PAGE;
+    return filteredOpportunities.slice(start, start + ITEMS_PER_PAGE);
+  }, [filteredOpportunities, currentPage]);
+
+  const trackedCount = Object.keys(stages).length;
 
   return (
     <div className="min-h-screen bg-[#070b12] text-slate-100 selection:bg-emerald-500/30 selection:text-emerald-200 relative overflow-hidden font-sans">
@@ -435,15 +427,19 @@ export default function Home() {
 
           <div className="flex items-center gap-2 sm:gap-3">
             <button
-              onClick={() => setShowingSavedOnly(!showingSavedOnly)}
-              className={`px-3 py-1.5 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition ${
-                showingSavedOnly 
-                  ? "bg-amber-500/10 border-amber-500/40 text-amber-300"
-                  : "bg-slate-900/60 border-slate-800 text-slate-300 hover:text-white"
-              }`}
+              onClick={() => setIsTrackerModalOpen(true)}
+              className="px-3 py-1.5 rounded-lg border border-slate-800 bg-slate-900/60 text-slate-300 hover:text-white text-xs font-medium flex items-center gap-1.5 transition"
             >
-              <Bookmark className={`w-3.5 h-3.5 ${showingSavedOnly ? "fill-amber-400 text-amber-400" : ""}`} />
-              <span className="hidden sm:inline">Saved</span> ({savedIds.length})
+              <Briefcase className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Pipeline</span> ({trackedCount})
+            </button>
+
+            <button
+              onClick={() => setIsResumeModalOpen(true)}
+              className="px-3 py-1.5 rounded-lg border border-slate-800 bg-slate-900/60 text-slate-300 hover:text-white text-xs font-medium flex items-center gap-1.5 transition"
+            >
+              <FileText className="w-3.5 h-3.5 text-teal-400" />
+              <span className="hidden sm:inline">Parse Resume</span>
             </button>
 
             <button
@@ -492,7 +488,7 @@ export default function Home() {
       </header>
 
       {/* Hero */}
-      <section className="max-w-6xl mx-auto px-6 pt-16 pb-10 text-center relative z-10">
+      <section className="max-w-6xl mx-auto px-6 pt-14 pb-8 text-center relative z-10">
         <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full border border-emerald-500/30 bg-emerald-950/40 text-emerald-300 text-xs font-semibold mb-6 shadow-inner">
           <Layers className="w-3.5 h-3.5 text-emerald-400" />
           Autonomous Diagnostic & Opportunity Engine
@@ -506,9 +502,10 @@ export default function Home() {
         </h1>
 
         <p className="mt-4 text-slate-400 max-w-2xl mx-auto text-sm sm:text-base leading-relaxed">
-          Calibrate your tech stack with the Skill Lens. Discover entry-level roles, hackathons, and open-source programs mapped directly to your current competencies.
+          Calibrate your tech stack with the Skill Lens or paste your resume. Discover entry-level roles, hackathons, and open-source programs mapped directly to your current competencies.
         </p>
 
+        {/* Search, Filter & Quick-Toggles */}
         <div className="mt-8 max-w-3xl mx-auto space-y-4">
           <div className="relative">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 w-5 h-5" />
@@ -516,7 +513,10 @@ export default function Home() {
               type="text"
               placeholder="Search by title, company, or tech stack (e.g. Next.js, Anthropic, Python)..."
               value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              onChange={(e) => {
+                setSearchTerm(e.target.value);
+                setCurrentPage(1);
+              }}
               className="w-full bg-[#0d1424]/90 border border-slate-800/80 rounded-2xl py-3.5 pl-12 pr-4 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500/40 shadow-xl transition"
             />
           </div>
@@ -526,7 +526,10 @@ export default function Home() {
               {["All", "Internship", "Open Source", "Hackathon", "Entry-Level"].map((filter) => (
                 <button
                   key={filter}
-                  onClick={() => setSelectedFilter(filter)}
+                  onClick={() => {
+                    setSelectedFilter(filter);
+                    setCurrentPage(1);
+                  }}
                   className={`text-xs px-3 py-1.5 rounded-lg font-medium transition ${
                     selectedFilter === filter
                       ? "bg-emerald-500 text-slate-950 font-bold shadow-md shadow-emerald-500/20"
@@ -539,7 +542,10 @@ export default function Home() {
             </div>
 
             <button
-              onClick={() => setMatchThresholdOnly(!matchThresholdOnly)}
+              onClick={() => {
+                setMatchThresholdOnly(!matchThresholdOnly);
+                setCurrentPage(1);
+              }}
               className={`text-xs px-3 py-1.5 rounded-lg border font-medium flex items-center gap-1.5 transition ${
                 matchThresholdOnly 
                   ? "bg-teal-500/20 border-teal-500/50 text-teal-300" 
@@ -553,8 +559,8 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Opportunities Feed */}
-      <main className="max-w-7xl mx-auto px-6 pb-24">
+      {/* Main Catalog Feed */}
+      <main className="max-w-7xl mx-auto px-6 pb-20">
         <div className="flex items-center justify-between border-b border-slate-800/60 pb-4 mb-6">
           <div className="flex items-center gap-2">
             <Target className="w-4 h-4 text-emerald-400" />
@@ -563,7 +569,7 @@ export default function Home() {
             </h2>
           </div>
           <div className="text-xs text-slate-500 font-mono">
-            Calibrated with <span className="text-emerald-400 font-bold">{userSkills.length}</span> active skills
+            Page {currentPage} of {totalPages}
           </div>
         </div>
 
@@ -579,12 +585,12 @@ export default function Home() {
           </div>
         ) : (
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            {filteredOpportunities.map((op) => {
+            {paginatedOpportunities.map((op) => {
               const { score, matched, missing } = calculateMatch(op.required_skills);
               const isHighMatch = score >= 75;
               const isMediumMatch = score >= 50 && score < 75;
-              const isBookmarked = savedIds.includes(op.id);
               const isDeleting = deletingId === op.id;
+              const currentStage = stages[op.id];
 
               return (
                 <div
@@ -593,9 +599,21 @@ export default function Home() {
                 >
                   <div>
                     <div className="flex items-start justify-between gap-2">
-                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-slate-900 text-slate-300 border border-slate-800">
-                        {op.type}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-slate-900 text-slate-300 border border-slate-800">
+                          {op.type}
+                        </span>
+                        {currentStage && (
+                          <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-md border ${
+                            currentStage === "Offer" ? "bg-emerald-950/80 text-emerald-300 border-emerald-700/60" :
+                            currentStage === "Interviewing" ? "bg-cyan-950/80 text-cyan-300 border-cyan-700/60" :
+                            currentStage === "Applied" ? "bg-blue-950/80 text-blue-300 border-blue-700/60" :
+                            "bg-amber-950/80 text-amber-300 border-amber-700/60"
+                          }`}>
+                            {currentStage}
+                          </span>
+                        )}
+                      </div>
 
                       <div
                         className={`flex items-center gap-1.5 text-xs font-bold px-2.5 py-0.5 rounded-full border ${
@@ -675,18 +693,18 @@ export default function Home() {
                   </div>
 
                   <div className="mt-6 pt-3.5 border-t border-slate-800/60 flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-2">
-                      <button 
-                        onClick={() => toggleBookmark(op.id)}
-                        className={`transition flex items-center gap-1 font-medium ${
-                          isBookmarked 
-                            ? "text-amber-400 hover:text-amber-300" 
-                            : "text-slate-400 hover:text-slate-200"
-                        }`}
+                    <div className="flex items-center gap-1.5">
+                      <select
+                        value={currentStage || ""}
+                        onChange={(e) => updateStage(op.id, (e.target.value as Stage) || null)}
+                        className="bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-[11px] text-slate-300 focus:outline-none focus:border-emerald-500"
                       >
-                        <Bookmark className={`w-3.5 h-3.5 ${isBookmarked ? "fill-amber-400" : ""}`} /> 
-                        {isBookmarked ? "Saved" : "Save"}
-                      </button>
+                        <option value="">Status</option>
+                        <option value="Saved">Saved</option>
+                        <option value="Applied">Applied</option>
+                        <option value="Interviewing">Interviewing</option>
+                        <option value="Offer">Offer</option>
+                      </select>
 
                       <button
                         onClick={(e) => handleDeleteOpportunity(op.id, e)}
@@ -704,6 +722,9 @@ export default function Home() {
                           href={op.apply_url}
                           target="_blank"
                           rel="noreferrer"
+                          onClick={() => {
+                            if (!currentStage) updateStage(op.id, "Applied");
+                          }}
                           className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-300 hover:text-emerald-400 transition flex items-center gap-1 font-medium text-[11px]"
                         >
                           <Send className="w-3 h-3 text-emerald-400" /> Apply
@@ -712,7 +733,7 @@ export default function Home() {
 
                       <button 
                         onClick={() => setActiveDetailModal(op)}
-                        className="text-emerald-400 hover:text-emerald-300 transition flex items-center gap-1 font-semibold cursor-pointer"
+                        className="text-emerald-400 hover:text-emerald-300 transition flex items-center gap-1 font-semibold cursor-pointer text-xs"
                       >
                         Roadmap <ArrowUpRight className="w-3.5 h-3.5" />
                       </button>
@@ -723,9 +744,152 @@ export default function Home() {
             })}
           </div>
         )}
+
+        {/* Dynamic Pagination Controls */}
+        {totalPages > 1 && (
+          <div className="mt-10 flex items-center justify-center gap-3">
+            <button
+              onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+              disabled={currentPage === 1}
+              className="p-2 rounded-xl border border-slate-800 bg-[#0d1424] hover:bg-slate-800 disabled:opacity-40 text-slate-300 transition"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <span className="text-xs text-slate-400 font-mono">
+              Page {currentPage} of {totalPages}
+            </span>
+            <button
+              onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+              disabled={currentPage === totalPages}
+              className="p-2 rounded-xl border border-slate-800 bg-[#0d1424] hover:bg-slate-800 disabled:opacity-40 text-slate-300 transition"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        )}
       </main>
 
-      {/* Details Modal */}
+      {/* Resume Parser Modal */}
+      {isResumeModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+          <div className="bg-[#0b101c] border border-slate-800 rounded-3xl max-w-lg w-full p-6 shadow-2xl relative">
+            <button
+              onClick={() => setIsResumeModalOpen(false)}
+              className="absolute top-5 right-5 text-slate-400 hover:text-white p-1 rounded-lg"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-2 mb-2">
+              <FileText className="w-5 h-5 text-emerald-400" />
+              <h3 className="text-lg font-bold text-white">Auto-Calibrate via Resume</h3>
+            </div>
+            <p className="text-xs text-slate-400 mb-4">
+              Paste the technical summary or skills section from your resume. OpportunityLens will extract matched technologies and calibrate your diagnostic score automatically.
+            </p>
+
+            <textarea
+              rows={6}
+              placeholder="Paste skills or resume text (e.g., Experienced in React, Next.js, Node.js, building PostgreSQL schemas, and containerizing microservices with Docker...)"
+              value={resumeText}
+              onChange={(e) => setResumeText(e.target.value)}
+              className="w-full bg-[#070b12] border border-slate-800 rounded-xl p-3 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-emerald-500 mb-3"
+            />
+
+            {resumeFeedback && (
+              <p className="text-xs font-medium text-emerald-300 mb-4 bg-emerald-950/40 p-2.5 rounded-lg border border-emerald-900/50">
+                {resumeFeedback}
+              </p>
+            )}
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
+              <button
+                onClick={() => setIsResumeModalOpen(false)}
+                className="text-xs text-slate-400 hover:text-white px-3 py-2 font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleParseResume}
+                className="px-5 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-xl text-xs font-bold shadow"
+              >
+                Extract & Calibrate
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Application Kanban Pipeline Modal */}
+      {isTrackerModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+          <div className="bg-[#0b101c] border border-slate-800 rounded-3xl max-w-4xl w-full p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto">
+            <button
+              onClick={() => setIsTrackerModalOpen(false)}
+              className="absolute top-5 right-5 text-slate-400 hover:text-white p-1 rounded-lg"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-2 mb-1">
+              <Briefcase className="w-5 h-5 text-cyan-400" />
+              <h3 className="text-lg font-bold text-white">Application Pipeline</h3>
+            </div>
+            <p className="text-xs text-slate-400 mb-6">
+              Track the progress of your opportunities through each phase of the hiring process.
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              {(["Saved", "Applied", "Interviewing", "Offer"] as Stage[]).map((col) => {
+                const colItems = opportunities.filter(op => stages[op.id] === col);
+                return (
+                  <div key={col} className="bg-[#070b12] border border-slate-800 rounded-2xl p-4 flex flex-col">
+                    <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-800 text-xs font-bold uppercase tracking-wider text-slate-300">
+                      <span>{col}</span>
+                      <span className="bg-slate-900 border border-slate-800 px-2 py-0.5 rounded-full text-[10px] text-emerald-400">
+                        {colItems.length}
+                      </span>
+                    </div>
+
+                    <div className="space-y-3 overflow-y-auto max-h-96 pr-1">
+                      {colItems.length === 0 ? (
+                        <p className="text-[11px] text-slate-600 italic py-4 text-center">No roles in this column</p>
+                      ) : (
+                        colItems.map(item => (
+                          <div key={item.id} className="p-3 bg-[#0d1424] border border-slate-800/80 rounded-xl text-xs space-y-1.5">
+                            <h4 className="font-bold text-slate-100 line-clamp-1">{item.title}</h4>
+                            <p className="text-slate-400 text-[11px]">{item.company}</p>
+                            <div className="pt-2 flex justify-between items-center text-[10px]">
+                              <select
+                                value={col}
+                                onChange={(e) => updateStage(item.id, e.target.value as Stage)}
+                                className="bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 text-slate-300"
+                              >
+                                <option value="Saved">Saved</option>
+                                <option value="Applied">Applied</option>
+                                <option value="Interviewing">Interviewing</option>
+                                <option value="Offer">Offer</option>
+                              </select>
+                              <button
+                                onClick={() => updateStage(item.id, null)}
+                                className="text-slate-500 hover:text-rose-400"
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Details & Roadmap Modal */}
       {activeDetailModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
           <div className="bg-[#0b101c] border border-slate-800 rounded-3xl max-w-xl w-full p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto">
@@ -846,12 +1010,6 @@ export default function Home() {
                   </a>
                 )}
                 <button
-                  onClick={() => toggleBookmark(activeDetailModal.id)}
-                  className="px-4 py-2 rounded-xl border border-slate-700 bg-slate-900 hover:bg-slate-800 text-xs font-semibold text-slate-200 transition"
-                >
-                  {savedIds.includes(activeDetailModal.id) ? "Remove Bookmark" : "Save"}
-                </button>
-                <button
                   onClick={() => setActiveDetailModal(null)}
                   className="px-5 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-xl text-xs font-bold shadow"
                 >
@@ -913,7 +1071,7 @@ export default function Home() {
                 onClick={() => setIsSkillModalOpen(false)}
                 className="px-5 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-xl text-xs font-bold shadow"
               >
-                Apply Diagnostic Lens
+                Apply Lens
               </button>
             </div>
           </div>
@@ -1010,7 +1168,11 @@ export default function Home() {
                       <button
                         type="button"
                         key={skill}
-                        onClick={() => toggleNewPostSkill(skill)}
+                        onClick={() => {
+                          setNewSkills(prev => 
+                            prev.includes(skill) ? prev.filter(s => s !== skill) : [...prev, skill]
+                          );
+                        }}
                         className={`text-[11px] px-2.5 py-1 rounded-lg border transition ${
                           isSelected
                             ? "bg-emerald-500 border-emerald-400 text-slate-950 font-bold"
@@ -1073,7 +1235,7 @@ export default function Home() {
               {authMode === "login" ? "Sign In to OpportunityLens" : "Create Developer Account"}
             </h3>
             <p className="text-xs text-slate-400 mb-5">
-              Sync your verified skill profile and saved opportunities across all devices.
+              Sync your verified skill profile, pipeline tracking, and opportunities across all devices.
             </p>
 
             {authError && (

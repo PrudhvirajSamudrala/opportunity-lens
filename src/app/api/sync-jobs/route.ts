@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 
-const REMOTIVE_API_URL = "https://remotive.com/api/remote-jobs?category=software-dev&limit=15";
+const REMOTIVE_API_URL = "https://remotive.com/api/remote-jobs?category=software-dev&limit=25";
 
 const SKILL_KEYWORDS = [
   "React",
@@ -76,9 +76,10 @@ export async function GET() {
       };
     });
 
+    // Upsert with onConflict on apply_url to prevent duplicate entries
     const { error } = await supabase
       .from("opportunities")
-      .insert(formattedRecords);
+      .upsert(formattedRecords, { onConflict: "apply_url", ignoreDuplicates: true });
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
@@ -86,8 +87,8 @@ export async function GET() {
 
     return NextResponse.json({
       success: true,
-      synced_count: formattedRecords.length,
-      sample_role: formattedRecords[0]?.title
+      processed_count: formattedRecords.length,
+      note: "Successfully fetched and deduplicated records against Supabase."
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
